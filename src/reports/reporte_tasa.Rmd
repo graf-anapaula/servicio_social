@@ -51,5 +51,4 @@ gg_banxico %>%
         theme_minimal() +
         ggtitle("Cambios en la tasa de interés")
         
-
 ```

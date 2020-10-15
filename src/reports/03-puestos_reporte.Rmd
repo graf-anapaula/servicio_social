@@ -1,0 +1,152 @@
+---
+title: "reporte_trabajo"
+author: "Ana Paula Graf"
+date: "8/10/2020"
+output: rmdformats::material
+# editor_options: 
+#   chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(reticulate)
+library(lubridate)
+library(scales)
+
+pt_hombres <- read_csv(here::here("data/raw/pt_hombres.csv"))
+pt_mujeres <- read_csv(here::here("data/raw/pt_mujeres.csv"))
+salario_hombres <- read_csv(here::here("data/raw/salario_hombres.csv"))
+salario_mujeres <- read_csv(here::here("data/raw/salario_mujeres.csv"))
+```
+
+```{python limpieza_py, include=FALSE}
+import numpy as np
+import pandas as pd
+import datetime as dt
+
+# Lectura de datos
+pt_hombres = r.pt_hombres
+pt_mujeres = r.pt_mujeres
+salario_hombres = r.salario_hombres
+salario_mujeres = r.salario_mujeres
+# pt_hombres = pd.read_csv("data/raw/pt_hombres.csv)
+# pt_mujeres = pd.read_csv("data/raw/pt_mujeres.csv")
+# salario_hombres = pd.read_csv("data/raw/salario_hombres.csv")
+# salario_mujeres = pd.read_csv("data/raw/salario_mujeres.csv")
+
+hombres_puesto = (pt_hombres
+                         .query('`Unnamed: 3` != "Tiempo"')
+                         .assign(fecha = lambda x: pd.to_datetime(x['Unnamed: 2']), 
+                                 sexo = 'M', 
+                                 total_puestos = lambda x: x['NACIONAL'])
+                         .filter(['fecha', 'sexo', 'total_puestos']))
+
+hombres_salario = (salario_hombres
+                         .query('`Unnamed: 2` != "Tiempo"')
+                         .assign(fecha = lambda x: pd.to_datetime(x['Unnamed: 2']), 
+                                 sexo = 'M', 
+                                 salario = lambda x: x['NACIONAL'])
+                         .filter(['fecha', 'sexo', 'salario']))
+
+hombres_salario['salario'] = pd.to_numeric(hombres_salario['salario'], errors= 'coerce')
+
+mujeres_puesto = (pt_mujeres
+                         .query('`Unnamed: 3` != "Tiempo"')
+                         .assign(fecha = lambda x: pd.to_datetime(x['Unnamed: 2']), 
+                                 sexo = 'F', 
+                                 total_puestos = lambda x: x['NACIONAL'])
+                         .filter(['fecha', 'sexo', 'total_puestos']))
+          
+mujeres_salario = (salario_mujeres
+                         .query('`Unnamed: 2` != "Tiempo"')
+                         .assign(fecha = lambda x: pd.to_datetime(x['Unnamed: 2']), 
+                                 sexo = 'F', 
+                                 salario = lambda x: x['NACIONAL'])
+                         .filter(['fecha', 'sexo', 'salario']))
+
+mujeres_salario['salario'] = pd.to_numeric(mujeres_salario['salario'], errors= 'coerce')
+
+hombres = hombres_puesto.merge(hombres_salario, how = 'outer', on = ['fecha', 'sexo'])
+mujeres = mujeres_puesto.merge(mujeres_salario, how = 'outer', on = ['fecha', 'sexo'])
+frames = [hombres, mujeres]
+trabajo = pd.concat(frames).sort_values('fecha')
+
+hombres = (hombres
+               .assign(m_puestos = lambda x: x['total_puestos'], 
+                       m_salario = lambda y: y['salario'])
+               .filter(['fecha', 'm_puestos', 'm_salario']))
+
+mujeres = (mujeres
+               .assign(f_puestos = lambda x: x['total_puestos'], 
+                       f_salario = lambda y: y['salario'])
+               .filter(['fecha', 'f_puestos', 'f_salario']))
+
+brechas = hombres.merge(mujeres, how = "outer", on = 'fecha')
+# brechas['m_salario'] = pd.to_numeric(brechas['m_salario'], errors= 'coerce')
+# brechas['f_salario'] = pd.to_numeric(brechas['f_salario'], errors= 'coerce')
+brechas = (brechas
+                .assign(brecha_puestos = lambda x: round(x.m_puestos - x.f_puestos, 1),
+                        mtrabajo_por = lambda x: round(x.m_puestos / x.f_puestos - 1, 2),
+                        brecha_salarial = lambda x: round(x.m_salario - x.f_salario, 1),
+                        fsalario_por = lambda y: round(y.m_salario / y.f_salario - 1, 2)))
+                        
+brechas = brechas.dropna()
+
+```
+
+## Brecha salarial en México
+
+Este reporte tiene como objetivo analizar la brecha salarial que existe en México entre hombres y mujeres. Se recabaron los datos emitidos por el **Instituto Mexicano del Seguro Social (IMSS)** y se hicieron distintas visualizaciones para ilustrar cómo ha cambiado la disparidad en la paga en puestos de trabajo y salarios desde 1997 hasta la actualidad.
+
+# Series de tiempo
+En las siguientes gráficas se puede observar una gráfica del cambio de salarios. 
+
+```{r vis, message=FALSE, warning=FALSE}
+
+trabajo <- as_tibble(py$trabajo)
+trabajo %>% 
+     ggplot(aes(fecha, total_puestos, color = sexo)) +
+     geom_line(size = 1) +
+     scale_x_datetime(NULL, date_labels = "%Y", date_breaks = "2 years") +
+     scale_y_continuous("Puestos de trabajo", labels = scales::dollar_format()) +
+     theme_minimal() + ggtitle("Cambio en salarios netos")
+
+trabajo %>% 
+     ggplot(aes(fecha, salario, color = sexo)) +
+     geom_line(size = 1) +
+     scale_x_datetime(NULL, date_labels = "%Y", date_breaks = "2 years") +
+     scale_y_continuous("Salario por hora", labels = scales::dollar_format()) +
+     theme_minimal() + ggtitle("Salarios por hora")
+
+```
+Podemos observar que hay un aumento sustancial en los salarios a través de los años. Sin embargo, se puede empezar a difenciar la brecha que ha existido en las últimas dos décadas entre hombres y mujeres.
+
+# Análisis de la brecha existente
+Posteriormente, se quería explorar más respecto a la brecha salarial que existe, por lo que se presentan las siguientes gráficas para abordar este análisis:
+
+```{r vis2, message=FALSE, warning=FALSE}
+brechas <- as_tibble(py$brechas)
+
+brechas %>% 
+     group_by(anio = year(fecha)) %>% 
+     summarise(fsalario_por = mean(fsalario_por)) %>% 
+     mutate(cambio = if_else(fsalario_por - lag(fsalario_por) > 0, 'Aumento', 'Disminución')) %>% 
+          filter(!is.na(cambio)) %>%
+     ggplot(aes(anio, fsalario_por)) +
+     geom_bar(aes(color = cambio, fill = cambio), stat = "identity", width = 0.6) +
+     scale_x_continuous(NULL, breaks = seq(1998, 2020, by = 2)) +
+     scale_y_continuous("Cambio porcentual", labels = scales::percent_format(accuracy = 1L)) +
+     theme_minimal() 
+     
+brechas %>% 
+     group_by(anio = year(fecha)) %>% 
+     summarise(mtrabajo_por = mean(mtrabajo_por)) %>% 
+     mutate(cambio = if_else(mtrabajo_por - lag(mtrabajo_por) > 0, 'Aumento', 'Disminución')) %>% 
+          filter(!is.na(cambio)) %>%
+     ggplot(aes(anio, mtrabajo_por)) +
+     geom_bar(aes(color = cambio, fill = cambio), stat = "identity", width = 0.6) +
+     scale_x_continuous(NULL, breaks = seq(1998, 2020, by = 2)) +
+     scale_y_continuous("Cambio porcentual", labels = scales::percent_format(accuracy = 1L)) +
+     theme_minimal() 
+     
+```
